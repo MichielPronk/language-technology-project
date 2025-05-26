@@ -1,0 +1,104 @@
+Self-direction: thought
+F1 Score:   0.32
+Precision:  0.25
+Recall:     0.43
+
+Self-direction: action
+F1 Score:   0.48
+Precision:  0.58
+Recall:     0.42
+
+Stimulation
+F1 Score:   0.21
+Precision:  0.13
+Recall:     0.52
+
+Hedonism
+F1 Score:   0.22
+Precision:  0.13
+Recall:     0.74
+
+Achievement
+F1 Score:   0.37
+Precision:  0.38
+Recall:     0.35
+
+Power: dominance
+F1 Score:   0.21
+Precision:  0.14
+Recall:     0.43
+
+Power: resources
+F1 Score:   0.16
+Precision:  0.1
+Recall:     0.45
+
+Face
+F1 Score:   0.14
+Precision:  0.08
+Recall:     0.6
+
+Security: personal
+F1 Score:   0.3
+Precision:  0.58
+Recall:     0.21
+
+Security: societal
+F1 Score:   0.35
+Precision:  0.33
+Recall:     0.37
+
+Tradition
+F1 Score:   0.21
+Precision:  0.12
+Recall:     0.69
+
+Conformity: rules
+F1 Score:   0.18
+Precision:  0.37
+Recall:     0.12
+
+Conformity: interpersonal
+F1 Score:   0.1
+Precision:  0.07
+Recall:     0.22
+
+Humility
+F1 Score:   0.16
+Precision:  0.1
+Recall:     0.39
+
+Benevolence: caring
+F1 Score:   0.54
+Precision:  0.44
+Recall:     0.68
+
+Benevolence: dependability
+F1 Score:   0.22
+Precision:  0.14
+Recall:     0.53
+
+Universalism: concern
+F1 Score:   0.39
+Precision:  0.62
+Recall:     0.28
+
+Universalism: nature
+F1 Score:   0.38
+Precision:  0.36
+Recall:     0.4
+
+Universalism: tolerance
+F1 Score:   0.13
+Precision:  0.17
+Recall:     0.1
+
+Universalism: objectivity
+F1 Score:   0.2
+Precision:  0.21
+Recall:     0.2
+
+ALL
+F1 Score:   0.29
+Precision:  0.23
+Recall:     0.37
