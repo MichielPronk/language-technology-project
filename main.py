@@ -129,7 +129,7 @@ def prompt_model(pipeline, terminators, argument, value, values_description, few
     )
     outputs = pipeline(
         prompt,
-        max_new_tokens=512,
+        max_new_tokens=1024,
         eos_token_id=terminators,
         do_sample=True,
         temperature=0.6,
@@ -141,8 +141,8 @@ def prompt_model(pipeline, terminators, argument, value, values_description, few
         response = outputs[0]["generated_text"].split('</think>')[-1].strip().lower()
         if "yes" in response:
             response = "yes"
+
     print(f"{value}: {response}")
-    breakpoint()
     return response
 
 
@@ -281,7 +281,7 @@ def main():
     filename = f"predictions_{args.split}_{args.model}_{shot}.json"
 
     with open(filename, "w") as f:
-        json.dump(results, f, indent=2)
+        json.dump(results, f, separators=(",", ":"))
 
 
 if __name__ == "__main__":

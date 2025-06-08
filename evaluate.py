@@ -1,3 +1,4 @@
+import argparse
 import json
 
 from sklearn.metrics import f1_score, precision_score, recall_score
@@ -5,7 +6,13 @@ from sklearn.metrics import f1_score, precision_score, recall_score
 from main import annotation_keys
 
 def main():
-    with open("predictions.json", "r") as f:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--filename", type=str, default="predictions.json",
+        help="Filename of the predictions to evaluate"
+    )
+    args = parser.parse_args()
+    with open(args.filename, "r") as f:
         predictions = json.load(f)
     
     all_pred = []
