@@ -78,15 +78,15 @@ annotation_keys = [
 
 def prompt_model(pipeline, terminators, argument, value, values_description, fewshot_examples):
     system_prompt = (
-        "You are an expert in argumentation. I will give you the premise of an argument "
-        "along with a description of a human value. It is your task to tell me if the human value is driving the argument."
+        "I will give you the premise of an argument along with a description of a human value. It is your task to assess if the human value is influencing the argument."
     )
 
     user_prompt = (
-        f"Given a premise and a human value category, classify whether or not the argument draws on that category.\n\n"
-        f"Human value: {value}\n"
-        f"Description of the value: {values_description}\n\n"
-        "Answer only with 'yes' or 'no'. Do not explain.\n\n"
+        f"Premise: {argument['Premise']}\n"
+        #f"Human value category: {value}\n"
+        f"Description of the value category: {values_description}\n\n"
+        f"Given the premise and the description of the human value category, classify whether the argument relies on that category or not.\n\n"
+        f"Answer only with 'yes' or 'no'. If the human value is present in the argument explicitly, answer 'yes'. If the human value is implicitly present, answer 'yes'. If the human value is not present at all, answer 'no'.\n\n"
     )
     if fewshot_examples:
         user_prompt += "Here are some examples:\n\n"
@@ -96,10 +96,10 @@ def prompt_model(pipeline, terminators, argument, value, values_description, few
                 f"Answer: {example[1]}\n\n"
             )
 
-    user_prompt += (
-        f"Premise: {argument['Premise']}\n"
-        "Answer: "
-    )
+    #user_prompt += (
+    #    f"Premise: {argument['Premise']}\n"
+    #    "Answer: "
+    #)
 
     prompt = (
         "<|start_header_id|>system<|end_header_id|>\n"
