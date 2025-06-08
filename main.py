@@ -76,7 +76,22 @@ annotation_keys = [
 ]
 
 
-def prompt_model(pipeline, terminators, argument, value, values_description, fewshot_examples):
+def prompt_model(pipeline, terminators, argument, value, values_description, fewshot_examples, model):
+    """
+    Prompt the language model to evaluate if a given human value is influencing an argument.
+
+    Parameters:
+        pipeline (Pipeline): The prediction pipeline to use for evaluation.
+        terminators (list): List of token IDs that indicate the end of the response.
+        argument (dict): The argument to evaluate, containing the premise.
+        value (str): The value to evaluate.
+        values_description (str): Description of the value category.
+        fewshot_examples (dict): Dictionary containing few-shot examples for each value.
+        model (str): The model to use.
+
+    Returns:
+        str: The model's response indicating whether the value is influencing the argument ("yes" or "no").
+    """
     system_prompt = (
         "I will give you the premise of an argument along with a description of a human value. It is your task to assess if the human value is influencing the argument."
     )
@@ -86,7 +101,11 @@ def prompt_model(pipeline, terminators, argument, value, values_description, few
         #f"Human value category: {value}\n"
         f"Description of the value category: {values_description}\n\n"
         f"Given the premise and the description of the human value category, classify whether the argument relies on that category or not.\n\n"
-        f"Answer only with 'yes' or 'no'. If the human value is present in the argument explicitly, answer 'yes'. If the human value is implicitly present, answer 'yes'. If the human value is not present at all, answer 'no'.\n\n"
+        f"IMPORTANT:\n"
+        f"Only respond with one word: 'yes' or 'no'.\n"
+        f"No explanations.\n"
+        f"If the human value is explicitly or implicitly present in the argument, answer 'yes'.\n"
+        f"If not present at all, answer 'no'.\n\n"
     )
     if fewshot_examples:
         user_prompt += "Here are some examples:\n\n"
@@ -110,19 +129,35 @@ def prompt_model(pipeline, terminators, argument, value, values_description, few
     )
     outputs = pipeline(
         prompt,
-        max_new_tokens=256,
+        max_new_tokens=512,
         eos_token_id=terminators,
         do_sample=True,
         temperature=0.6,
         top_p=0.9,
     )
-
-    response = outputs[0]["generated_text"].split("<|end_header_id|>")[-1].strip().lower()
+    if model == "llama":
+        response = outputs[0]["generated_text"].split("<|end_header_id|>")[-1].strip().lower()
+    else:
+        response = outputs[0]["generated_text"].split('</think>')[-1].strip().lower()
+        if "yes" in response:
+            response = "yes"
     print(f"{value}: {response}")
+    breakpoint()
     return response
 
 
 def get_examples(train, value):
+    """
+    Get a few-shot example set for the given value from the training data.
+
+    Parameters:
+        train (Dataset): The training dataset containing arguments and their labels.
+        value (str): The value for which to retrieve examples.
+
+    Returns:
+        list: A list of tuples containing the premise and the label ("yes" or "no") for the specified value.
+
+    """
     examples = []
     value_index = annotation_keys.index(value)
     yes_count = 0
@@ -140,8 +175,13 @@ def get_examples(train, value):
 
     return examples
 
+def argparser():
+    """
+    Argument parser for the value evaluation task.
 
-def main():
+    Returns:
+        argparse.Namespace: Parsed command-line arguments.
+    """
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--split", type=str, default="validation",
@@ -161,7 +201,13 @@ def main():
         "--hf_token", type=str, default=None,
         help="Hugging Face token for authentication (optional, can also use environment variable HF_TOKEN)"
     )
-    args = parser.parse_args()
+    return parser.parse_args()
+
+def main():
+    """
+    Main function to run the value evaluation task using a language model.
+    """
+    args = argparser()
     login(args.hf_token)  # Or use os.environ["HF_TOKEN"]
     models = {
         "llama": "meta-llama/Meta-Llama-3-8B-Instruct",
@@ -203,19 +249,21 @@ def main():
         for value in values_prompt_context.keys():
             try:
                 value_description = values_prompt_context[value]["description"]
-                response = prompt_model(pipeline, terminators, argument, value, value_description, fewshot_examples)
+                response = prompt_model(pipeline, terminators, argument, value, value_description, fewshot_examples,
+                                        args.model)
                 if response == "yes":
                     for sub_value in values_prompt_context[value].keys():
                         if sub_value == "description":
                             continue
                         sub_description = values_prompt_context[value][sub_value]
                         sub_response = prompt_model(pipeline, terminators, argument, sub_value, sub_description,
-                                                    fewshot_examples)
+                                                    fewshot_examples, args.model)
                         if sub_response == "yes":
                             annotations[sub_value] = 1
             except TypeError:
                 value_description = values_prompt_context[value]
-                response = prompt_model(pipeline, terminators, argument, value, value_description, fewshot_examples)
+                response = prompt_model(pipeline, terminators, argument, value, value_description, fewshot_examples,
+                                        args.model)
                 if response == "yes":
                     annotations[value] = 1
         arg_id = argument["Argument ID"]
