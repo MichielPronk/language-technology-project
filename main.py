@@ -142,7 +142,6 @@ def prompt_model(pipeline, terminators, argument, value, values_description, few
         if "yes" in response:
             response = "yes"
 
-    print(f"{value}: {response}")
     return response
 
 
@@ -201,6 +200,10 @@ def argparser():
         "--hf_token", type=str, default=None,
         help="Hugging Face token for authentication (optional, can also use environment variable HF_TOKEN)"
     )
+    parser.add_argument(
+        "--index_range", type=int, nargs=2, metavar=('START', 'END'),
+        help="Start and end indices to slice the dataset"
+    )
     return parser.parse_args()
 
 def main():
@@ -230,6 +233,9 @@ def main():
     dataset = load_dataset("webis/Touche23-ValueEval", trust_remote_code=True)
     train = dataset['train']
     split_data = dataset[args.split]
+    if args.index_range:
+        start, end = args.index_range
+        split_data = split_data.select(range(start, end))
 
     train = train.shuffle(seed=10)
 
@@ -278,7 +284,10 @@ def main():
     if args.fewshot:
         shot = "fewshot"
 
-    filename = f"predictions_{args.split}_{args.model}_{shot}.json"
+    filename = f"predictions_{args.split}_{args.model}_{shot}"
+    if args.index_range:
+        filename += f"_{start}_{end}"
+    filename += ".json"
 
     with open(filename, "w") as f:
         json.dump(results, f, separators=(",", ":"))
