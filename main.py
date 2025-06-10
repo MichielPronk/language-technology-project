@@ -8,6 +8,10 @@ from datasets import load_dataset
 from huggingface_hub import login
 from tqdm import tqdm
 
+from sentence_transformers import SentenceTransformer
+import faiss
+import numpy as np
+
 
 values_prompt_context = {
     "Self-direction": {
@@ -76,7 +80,7 @@ annotation_keys = [
 ]
 
 
-def prompt_model(pipeline, terminators, argument, value, values_description, fewshot_examples, model):
+def prompt_model(pipeline, terminators, argument, value, values_description, rag_examples, fewshot_examples, model):
     """
     Prompt the language model to evaluate if a given human value is influencing an argument.
 
@@ -107,7 +111,10 @@ def prompt_model(pipeline, terminators, argument, value, values_description, few
         f"If the human value is explicitly or implicitly present in the argument, answer 'yes'.\n"
         f"If not present at all, answer 'no'.\n\n"
     )
-    if fewshot_examples:
+    if rag_examples:
+        for prem, label in rag_examples:
+            user_prompt += f"Premise: {prem}\nAnswer: {label}\n\n"
+    elif fewshot_examples:
         user_prompt += "Here are some examples:\n\n"
         for example in fewshot_examples[value]:
             user_prompt += (
@@ -174,6 +181,38 @@ def get_examples(train, value):
 
     return examples
 
+
+def build_rag_index(train, embed_model):
+    dim = embed_model.get_sentence_embedding_dimension()
+    index = faiss.IndexHNSWFlat(dim, 32)
+    index.hnsw.efConstruction = 200
+
+    meta = []  # parallel list
+    for row in train:
+        arg_text = f"{row['Premise']} ⟂ {row['Stance']} ⟂ {row['Conclusion']}"
+        vec = embed_model.encode(arg_text, convert_to_numpy=True, normalize_embeddings=True)
+        # elke positieve en negatieve label wordt apart opgeslagen
+        for vidx, value in enumerate(annotation_keys):
+            label = row["Labels"][vidx]           # 1 / 0
+            meta.append((value, label, arg_text, row["Argument ID"]))
+            index.add(vec.reshape(1, -1))
+    return index, meta
+
+
+def retrieve_prototypes(embedder, rag_index, rag_meta, arg_text, value, k_pos=3, k_neg=3):
+    q = embedder.encode(arg_text, convert_to_numpy=True, normalize_embeddings=True)
+    _, idxs = rag_index.search(q.reshape(1, -1), 100)  # 100 neighbours
+    pos, neg = [], []
+    for i in idxs[0]:
+        v, lab, txt, arg_id = rag_meta[i]
+        if v != value or txt == arg_text:
+            continue
+        (pos if lab else neg).append(txt)
+        if len(pos) >= k_pos and len(neg) >= k_neg:
+            break
+    return [(p, "yes") for p in pos] + [(n, "no") for n in neg]
+
+
 def argparser():
     """
     Argument parser for the value evaluation task.
@@ -195,6 +234,10 @@ def argparser():
     parser.add_argument(
         "--fewshot", action="store_true",
         help="Whether to use few-shot examples in the prompt"
+    )
+    parser.add_argument(
+        "--rag", action="store_true",
+        help="Whether to use RAG for few-shot examples"
     )
     parser.add_argument(
         "--hf_token", type=str, default=None,
@@ -240,12 +283,26 @@ def main():
     train = train.shuffle(seed=10)
 
     fewshot_examples = {}
-    if args.fewshot:
+    if args.fewshot and not args.rag:
         for value in annotation_keys:
             fewshot_examples[value] = get_examples(train, value)
         for value in values_prompt_context.keys():
             vs = [v for v in annotation_keys if v.startswith(value)]
             fewshot_examples[value] = [ex for v in vs for ex in fewshot_examples[v]]
+    
+    if args.rag:
+        embedder = SentenceTransformer("mixedbread-ai/mxbai-embed-large-v1")
+        if os.path.exists("rag_index/rag_index.faiss") and os.path.exists("rag_index/rag_meta.json"):
+            rag_index = faiss.read_index("rag_index/rag_index.faiss")
+            with open("rag_index/rag_meta.json", "r") as f:
+                rag_meta = json.load(f)
+        else:
+            rag_index, rag_meta = build_rag_index(train, embedder)
+        if not os.path.exists("rag_index"):
+            os.makedirs("rag_index")
+            faiss.write_index(rag_index, "rag_index/rag_index.faiss")
+            with open("rag_index/rag_meta.json", "w") as f:
+                json.dump(rag_meta, f, separators=(",", ":"))
 
     results = {}
 
@@ -253,9 +310,14 @@ def main():
         annotations = {key: 0 for key in annotation_keys}
 
         for value in values_prompt_context.keys():
+            rag_examples = []
+            if args.rag:
+                arg_text = f"{argument['Premise']} ⟂ {argument['Stance']} ⟂ {argument['Conclusion']}"
+                rag_examples = retrieve_prototypes(embedder, rag_index, rag_meta, arg_text, value)
+        
             try:
                 value_description = values_prompt_context[value]["description"]
-                response = prompt_model(pipeline, terminators, argument, value, value_description, fewshot_examples,
+                response = prompt_model(pipeline, terminators, argument, value, value_description, rag_examples, fewshot_examples,
                                         args.model)
                 if response == "yes":
                     for sub_value in values_prompt_context[value].keys():
@@ -263,12 +325,12 @@ def main():
                             continue
                         sub_description = values_prompt_context[value][sub_value]
                         sub_response = prompt_model(pipeline, terminators, argument, sub_value, sub_description,
-                                                    fewshot_examples, args.model)
+                                                    rag_examples, fewshot_examples, args.model)
                         if sub_response == "yes":
                             annotations[sub_value] = 1
             except TypeError:
                 value_description = values_prompt_context[value]
-                response = prompt_model(pipeline, terminators, argument, value, value_description, fewshot_examples,
+                response = prompt_model(pipeline, terminators, argument, value, value_description, rag_examples, fewshot_examples,
                                         args.model)
                 if response == "yes":
                     annotations[value] = 1
