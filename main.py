@@ -1,4 +1,5 @@
 import argparse
+import faiss
 import json
 import os
 import torch
@@ -6,11 +7,8 @@ import transformers
 
 from datasets import load_dataset
 from huggingface_hub import login
-from tqdm import tqdm
-
 from sentence_transformers import SentenceTransformer
-import faiss
-import numpy as np
+from tqdm import tqdm
 
 
 values_prompt_context = {
@@ -99,10 +97,8 @@ def prompt_model(pipeline, terminators, argument, value, values_description, rag
     system_prompt = (
         "I will give you the premise of an argument along with a description of a human value. It is your task to assess if the human value is influencing the argument."
     )
-
     user_prompt = (
         f"Premise: {argument['Premise']}\n"
-        #f"Human value category: {value}\n"
         f"Description of the value category: {values_description}\n\n"
         f"Given the premise and the description of the human value category, classify whether the argument relies on that category or not.\n\n"
         f"IMPORTANT:\n"
@@ -122,11 +118,6 @@ def prompt_model(pipeline, terminators, argument, value, values_description, rag
                 f"Answer: {example[1]}\n\n"
             )
 
-    #user_prompt += (
-    #    f"Premise: {argument['Premise']}\n"
-    #    "Answer: "
-    #)
-
     prompt = (
         "<|start_header_id|>system<|end_header_id|>\n"
         f"{system_prompt}\n"
@@ -134,6 +125,7 @@ def prompt_model(pipeline, terminators, argument, value, values_description, rag
         f"{user_prompt}\n"
         "<|start_header_id|>assistant<|end_header_id|>\n"
     )
+
     outputs = pipeline(
         prompt,
         max_new_tokens=1024,
@@ -142,9 +134,11 @@ def prompt_model(pipeline, terminators, argument, value, values_description, rag
         temperature=0.6,
         top_p=0.9,
     )
+
     if model == "llama":
         response = outputs[0]["generated_text"].split("<|end_header_id|>")[-1].strip().lower()
     else:
+        # For DeepSeek, we use a different token to split the response.
         response = outputs[0]["generated_text"].split('</think>')[-1].strip().lower()
         if "yes" in response:
             response = "yes"
@@ -183,23 +177,49 @@ def get_examples(train, value):
 
 
 def build_rag_index(train, embed_model):
+    """
+    Build a RAG index using the training data and a sentence embedding model.
+
+    Parameters:
+        train (Dataset): The training dataset containing arguments and their labels.
+        embed_model (SentenceTransformer): The model used to generate sentence embeddings.
+
+    Returns:
+        faiss.IndexHNSWFlat: The FAISS index containing the embeddings.
+        list: A list of metadata tuples containing value, label, argument text, and argument ID.
+    """
     dim = embed_model.get_sentence_embedding_dimension()
     index = faiss.IndexHNSWFlat(dim, 32)
     index.hnsw.efConstruction = 200
 
-    meta = []  # parallel list
+    meta = []  # parallel list.
     for row in train:
         arg_text = f"{row['Premise']} ⟂ {row['Stance']} ⟂ {row['Conclusion']}"
         vec = embed_model.encode(arg_text, convert_to_numpy=True, normalize_embeddings=True)
-        # elke positieve en negatieve label wordt apart opgeslagen
+        # elke positieve en negatieve label wordt apart opgeslagen.
         for vidx, value in enumerate(annotation_keys):
-            label = row["Labels"][vidx]           # 1 / 0
+            label = row["Labels"][vidx]           # 1 / 0.
             meta.append((value, label, arg_text, row["Argument ID"]))
             index.add(vec.reshape(1, -1))
     return index, meta
 
 
 def retrieve_prototypes(embedder, rag_index, rag_meta, arg_text, value, k_pos=3, k_neg=3):
+    """
+    Retrieve positive and negative examples for a given argument text from the RAG index.
+
+    Parameters:
+        embedder (SentenceTransformer): The model used to generate sentence embeddings.
+        rag_index (faiss.IndexHNSWFlat): The FAISS index containing the embeddings.
+        rag_meta (list): Metadata containing value, label, argument text, and argument ID.
+        arg_text (str): The argument text for which to retrieve examples.
+        value (str): The value to filter examples by.
+        k_pos (int): Number of positive examples to retrieve.
+        k_neg (int): Number of negative examples to retrieve.
+
+    Returns:
+        list: A list of tuples containing the retrieved examples and their labels.
+    """
     q = embedder.encode(arg_text, convert_to_numpy=True, normalize_embeddings=True)
     _, idxs = rag_index.search(q.reshape(1, -1), 100)  # 100 neighbours
     pos, neg = [], []
@@ -266,6 +286,7 @@ def main():
         model_kwargs={"torch_dtype": torch.bfloat16},
         device_map="auto",
     )
+
     pipeline.tokenizer.pad_token_id = pipeline.tokenizer.eos_token_id
 
     terminators = [
@@ -277,6 +298,7 @@ def main():
     train = dataset['train']
     split_data = dataset[args.split]
     if args.index_range:
+        # Get split, used for batching processing.
         start, end = args.index_range
         split_data = split_data.select(range(start, end))
 
@@ -298,6 +320,7 @@ def main():
                 rag_meta = json.load(f)
         else:
             rag_index, rag_meta = build_rag_index(train, embedder)
+
         if not os.path.exists("rag_index"):
             os.makedirs("rag_index")
             faiss.write_index(rag_index, "rag_index/rag_index.faiss")
@@ -316,6 +339,8 @@ def main():
                 rag_examples = retrieve_prototypes(embedder, rag_index, rag_meta, arg_text, value)
         
             try:
+                # Try to get top level descriptions for values with subvalues
+                # if not existent raise TypeError.
                 value_description = values_prompt_context[value]["description"]
                 response = prompt_model(pipeline, terminators, argument, value, value_description, rag_examples, fewshot_examples,
                                         args.model)
