@@ -342,7 +342,7 @@ def main():
         print(f"{argument['Labels']}\n {[annotations[key] for key in annotation_keys]}")
 
     # Save to JSON
-    shot = "oneshot"
+    shot = "zeroshot"
     if args.fewshot:
         shot = "fewshot"
 
