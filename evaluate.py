@@ -29,15 +29,17 @@ def main():
 
         print(value)
 
-        print("F1 Score:  ", round(f1_score(ref, pred, average="macro"), 2))
-        print("Precision: ", round(precision_score(ref, pred, average="macro"), 2))
-        print("Recall:    ", round(recall_score(ref, pred, average="macro"), 2))
+        print("F1 Score:  ", round(f1_score(ref, pred, average="binary"), 2))
+        print("Precision: ", round(precision_score(ref, pred, average="binary"), 2))
+        print("Recall:    ", round(recall_score(ref, pred, average="binary"), 2))
         print()
 
+    # This is the same as mean precision of all categories, mean recall of all
+    # categories, and harmonic mean of mean precision and recall
     print("ALL")
-    print("F1 Score:  ", round(f1_score(all_ref, all_pred, average="macro"), 2))
-    print("Precision: ", round(precision_score(all_ref, all_pred, average="macro"), 2))
-    print("Recall:    ", round(recall_score(all_ref, all_pred, average="macro"), 2))
+    print("F1 Score:  ", round(f1_score(all_ref, all_pred, average="binary"), 2))
+    print("Precision: ", round(precision_score(all_ref, all_pred, average="binary"), 2))
+    print("Recall:    ", round(recall_score(all_ref, all_pred, average="binary"), 2))
 
 
 if __name__ == "__main__":
