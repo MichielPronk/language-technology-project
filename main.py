@@ -176,31 +176,36 @@ def get_examples(train, value):
     return examples
 
 
-def build_rag_index(train, embed_model):
+def build_rag_index(train, embed_model, annotation_keys):
     """
     Build a RAG index using the training data and a sentence embedding model.
-
-    Parameters:
-        train (Dataset): The training dataset containing arguments and their labels.
-        embed_model (SentenceTransformer): The model used to generate sentence embeddings.
 
     Returns:
         faiss.IndexHNSWFlat: The FAISS index containing the embeddings.
         list: A list of metadata tuples containing value, label, argument text, and argument ID.
     """
     dim = embed_model.get_sentence_embedding_dimension()
-    index = faiss.IndexHNSWFlat(dim, 32)
-    index.hnsw.efConstruction = 200
+    # Using IndexFlatL2 is standard and works well with normalized embeddings.
+    index = faiss.IndexFlatL2(dim)
 
-    meta = []  # parallel list.
-    for row in train:
+    embeddings = []
+    meta = []
+    print("Building RAG index...")
+    for row in tqdm(train):
         arg_text = f"{row['Premise']} ⟂ {row['Stance']} ⟂ {row['Conclusion']}"
-        vec = embed_model.encode(arg_text, convert_to_numpy=True, normalize_embeddings=True)
-        # elke positieve en negatieve label wordt apart opgeslagen.
-        for vidx, value in enumerate(annotation_keys):
-            label = row["Labels"][vidx]           # 1 / 0.
-            meta.append((value, label, arg_text, row["Argument ID"]))
-            index.add(vec.reshape(1, -1))
+        # We store the labels as a dictionary for easy lookup later
+        labels_dict = {key: label for key, label in zip(annotation_keys, row["Labels"])}
+        meta.append({
+            "text": arg_text,
+            "id": row["Argument ID"],
+            "labels": labels_dict
+        })
+        # Batch encode later for efficiency, for now this is fine
+        embeddings.append(embed_model.encode(arg_text, normalize_embeddings=True))
+
+    # Add all vectors to the index at once for better performance
+    index.add(np.array(embeddings, dtype='float32'))
+    print(f"Index built with {index.ntotal} unique vectors.")
     return index, meta
 
 
@@ -220,17 +225,50 @@ def retrieve_prototypes(embedder, rag_index, rag_meta, arg_text, value, k_pos=3,
     Returns:
         list: A list of tuples containing the retrieved examples and their labels.
     """
-    q = embedder.encode(arg_text, convert_to_numpy=True, normalize_embeddings=True)
-    _, idxs = rag_index.search(q.reshape(1, -1), 100)  # 100 neighbours
-    pos, neg = [], []
-    for i in idxs[0]:
-        v, lab, txt, arg_id = rag_meta[i]
-        if v != value or txt == arg_text:
+    query_text = f"{query_argument['Premise']} ⟂ {query_argument['Stance']} ⟂ {query_argument['Conclusion']}"
+    query_vector = embedder.encode(query_text, normalize_embeddings=True).reshape(1, -1)
+
+    # Retrieve more neighbors to ensure we find enough positive/negative examples
+    distances, indices = rag_index.search(query_vector, k=200)
+
+    pos_examples, neg_examples = [], []
+    
+    # Get the specific sub-values we are interested in for this query
+    # If 'value' is top-level (like "Security"), get its children.
+    # If 'value' is specific (like "Stimulation"), it will be a list of one.
+    if isinstance(values_prompt_context.get(value), dict):
+        # It's a hierarchical value, get its sub-values
+        relevant_values = [k for k in values_prompt_context[value] if k != "description"]
+    else:
+        # It's a single-level value
+        relevant_values = [value]
+
+    for i in indices[0]:
+        retrieved_item = rag_meta[i]
+
+        # Skip if it's the exact same argument we are querying for
+        if retrieved_item["id"] == query_argument["Argument ID"]:
             continue
-        (pos if lab else neg).append(txt)
-        if len(pos) >= k_pos and len(neg) >= k_neg:
+
+        # Check if this retrieved item is positive or negative for ANY of the relevant values
+        is_positive = any(retrieved_item["labels"].get(v) == 1 for v in relevant_values)
+        
+        # Append to the correct list if we still need samples
+        if is_positive and len(pos_examples) < k_pos:
+            pos_examples.append(retrieved_item["text"])
+        elif not is_positive and len(neg_examples) < k_neg:
+            # An item is a good negative example if it's NOT positive for the value in question.
+            neg_examples.append(retrieved_item["text"])
+
+        # Stop when we have found enough examples of both types
+        if len(pos_examples) >= k_pos and len(neg_examples) >= k_neg:
             break
-    return [(p, "yes") for p in pos] + [(n, "no") for n in neg]
+            
+    # Remove duplicates
+    pos_examples = list(dict.fromkeys(pos_examples))
+    neg_examples = list(dict.fromkeys(neg_examples))
+
+    return [(p, "yes") for p in pos_examples[:k_pos]] + [(n, "no") for n in neg_examples[:k_neg]]
 
 
 def argparser():
@@ -319,7 +357,7 @@ def main():
             with open("rag_index/rag_meta.json", "r") as f:
                 rag_meta = json.load(f)
         else:
-            rag_index, rag_meta = build_rag_index(train, embedder)
+            rag_index, rag_meta = build_rag_index(train, embedder, annotation_keys)
 
         if not os.path.exists("rag_index"):
             os.makedirs("rag_index")
